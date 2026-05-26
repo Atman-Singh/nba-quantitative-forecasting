@@ -17,7 +17,7 @@ class ESPNClient:
 
     @staticmethod
     def get_scoreboard(date: datetime) -> dict:
-        return requests.get(SCOREBOARD_URL, params={'dates':ESPNClient._format_date(date)}).json()
+        return requests.get(SCOREBOARD_URL, params={'dates':str(ESPNClient._format_date(date))}).json()
     
     @staticmethod
     def _format_team_name(team_name: str):
@@ -73,16 +73,11 @@ class ESPNClient:
                 print(f'more games ({n}) requested than available, fetching more games')
             i += 1
         return matchups[:min(m, n)]
-    
-    # @staticmethod 
-    # def _get_last_n_game_ids(game_id: str, poi_id: str, n: int):
-        
 
-    
     @staticmethod
     def _get_last_n_game_ids(team_id: int, n: int) -> list:
         schedule = ESPNClient.get_schedule(team_id, CURRENT_YEAR, -1)
-        ids = [e['id'] for e in schedule]
+        ids = [r['id'] for r in schedule]
         if len(schedule) < n:
             print(f'warning: more games ({n}) requested than available')
         return ids[:min(len(schedule), n)]
@@ -126,14 +121,14 @@ class ESPNClient:
         return player_box_scores
     
     @staticmethod
-    def get_box_scores(game_id: str | int):
-        url = BOX_SCORES_URL + game_id
+    def get_box_scores(game_id: int):
+        url = BOX_SCORES_URL + str(game_id)
         return requests.get(url=url).json()['boxscore']['players']
          
     # get ids of teammate and opponents relative to a particular player id from a game id
     @staticmethod
-    def get_player_ids(game_id: str | int, player_id: str) -> tuple[list, list]:
-        url = BOX_SCORES_URL + game_id  
+    def get_player_ids(game_id: int, player_id: str) -> tuple[list, list]:
+        url = BOX_SCORES_URL + str(game_id) 
         teammates = []
         opponents = []
         teams = requests.get(url=url).json()['boxscore']['players']
@@ -167,8 +162,8 @@ class ESPNClient:
         return teammates, opponents
     
     @staticmethod
-    def _format_date(date: datetime) -> str:
-        return date.strftime(DATE_FORMAT)
+    def _format_date(date: datetime) -> int:
+        return int(date.strftime(DATE_FORMAT))
 
     @staticmethod
     def get_current_date() -> datetime:
@@ -177,3 +172,14 @@ class ESPNClient:
     @staticmethod
     def decrement_date(date: datetime):
         return date - dt.timedelta(days=1)
+    
+    @staticmethod
+    def get_game_date(game_id: int) -> int:
+        url = BOX_SCORES_URL + str(game_id)
+        summary = requests.get(url=url).json()["header"]["competitions"][0]["date"]
+
+        dt = datetime.fromisoformat(
+            summary.replace("Z", "+00:00")
+        )
+        
+        return ESPNClient._format_date(dt)

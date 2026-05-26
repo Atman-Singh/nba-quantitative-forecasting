@@ -13,8 +13,8 @@ CONFIG_PATH = os.path.join(GAME_LOG_DIR, "config.json")
 class DataAggregator():
     
     game_log = pd.DataFrame({
-        "PLAYER_ID": pd.Series(dtype="str"),
-        "GAME_ID": pd.Series(dtype="str"),
+        "PLAYER_ID": pd.Series(dtype="int64"),
+        "GAME_ID": pd.Series(dtype="int64"),
         "GAME_DATE": pd.Series(dtype="int64"),
         "DNP": pd.Series(dtype="int64"),
         "MIN": pd.Series(dtype="int64"),
@@ -34,31 +34,31 @@ class DataAggregator():
     })
 
     @staticmethod
-    def _add_to_game_log(rows_df):
+    def _add_to_game_log(rows_df) -> None:
         DataAggregator.game_log = pd.concat([DataAggregator.game_log, rows_df], ignore_index=True)
 
     @staticmethod
-    def build_player_game_logs():
+    def build_player_game_logs() -> None:
         rows = []
         date = ESPNClient.get_current_date()
-        for _ in range(5):
-            date = ESPNClient.decrement_date(date)
+        for _ in range(50):
             games = ESPNClient.get_scoreboard(date)['events']
             for game in games:
-                game_id = game['id']
+                game_id = int(game['id'])
                 box_scores = ESPNClient.get_box_scores(game_id)
                 for team in box_scores:
                     for player in team['statistics'][0]['athletes']:
-                        player_id = player['athlete']['id']
+                        player_id = int(player['athlete']['id'])
                         ESPNClient.format_box_score(player['stats'])
-                        row = [player_id, game_id, int(ESPNClient._format_date(date)), int(player['didNotPlay'])]
+                        row = [player_id, game_id, ESPNClient._format_date(date), int(player['didNotPlay'])]
                         row.extend(player['stats'])
                         rows.append(row)
+            date = ESPNClient.decrement_date(date)
         DataAggregator._add_to_game_log(pd.DataFrame(rows, columns=DataAggregator.game_log.columns))
         DataAggregator.save_game_log()
     
     @staticmethod
-    def save_game_log():
+    def save_game_log() -> None:
         name = "/game_log_" + datetime.now().strftime(TIMESTAMP_FORMAT) + '.parquet'
         path = GAME_LOG_DIR + name
         os.makedirs(GAME_LOG_DIR, exist_ok=True)
@@ -79,15 +79,15 @@ class DataAggregator():
         print('Game log saved to ' + path)
     
     @staticmethod
-    def load_game_log(columns: list = None):
+    def load_game_log(columns: list = None) -> None:
         with open(CONFIG_PATH, 'r') as f:
             config = json.load(f)
         name = config['game_log_name']
 
         if columns:
-            return pd.read_parquet(GAME_LOG_DIR + name, 
+            DataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, 
                                    engine="pyarrow",
                                    columns=columns
                                    )
-        return pd.read_parquet(GAME_LOG_DIR + name, engine="pyarrow")
+        DataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, engine="pyarrow")
         
