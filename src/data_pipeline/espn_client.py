@@ -4,6 +4,7 @@ from datetime import datetime
 from datetime import date
 import torch
 from torch import tensor
+import requests.exceptions
 
 FEATURES = 14
 TEAMS_URL = 'http://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
@@ -123,19 +124,21 @@ class ESPNClient:
     @staticmethod
     def get_box_scores(game_id: int):
         url = BOX_SCORES_URL + str(game_id)
-        return requests.get(url=url).json()['boxscore']['players']
+        try:
+            return requests.get(url=url).json()['boxscore']['players']
+        except KeyError:
+            print('Game is yet to be played.')
          
     # get ids of teammate and opponents relative to a particular player id from a game id
     @staticmethod
-    def get_player_ids(game_id: int, player_id: str) -> tuple[list, list]:
-        url = BOX_SCORES_URL + str(game_id) 
+    def get_player_ids(game_id: int, player_id: str) -> tuple[list[int], list[int]]:
         teammates = []
         opponents = []
-        teams = requests.get(url=url).json()['boxscore']['players']
+        box_scores = ESPNClient.get_box_scores(game_id=game_id)
         
         poi_team_id = -1
         temp = []
-        for team in teams:
+        for team in box_scores:
             num_athletes = len(team['statistics'][0]['athletes'])
             cur_team_id = team['team']['id']
             if poi_team_id == -2:
@@ -148,16 +151,16 @@ class ESPNClient:
                         teammates = temp
                         poi_team_id = cur_team_id
                     elif i == num_athletes-1:
-                        temp.append(cur_id)
+                        temp.append(int(cur_id))
                         opponents = temp
                         poi_team_id = -2
                     else:
-                        temp.append(cur_id)
+                        temp.append(int(cur_id))
                 elif cur_id != player_id:
                     if cur_team_id == poi_team_id:
-                        teammates.append(cur_id)
+                        teammates.append(int(cur_id))
                     else:
-                        opponents.append(cur_id)
+                        opponents.append(int(cur_id))
         
         return teammates, opponents
     

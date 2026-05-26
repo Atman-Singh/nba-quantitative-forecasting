@@ -13,10 +13,11 @@ CONFIG_PATH = os.path.join(GAME_LOG_DIR, "config.json")
 class DataAggregator():
     
     game_log = pd.DataFrame({
-        "PLAYER_ID": pd.Series(dtype="int64"),
         "GAME_ID": pd.Series(dtype="int64"),
         "GAME_DATE": pd.Series(dtype="int64"),
-        "DNP": pd.Series(dtype="int64"),
+        "REAL_PLAYER": pd.Series(dtype="int64"),
+        "PLAYER_ID": pd.Series(dtype="int64"),
+        "PLAYING": pd.Series(dtype="int64"),
         "MIN": pd.Series(dtype="int64"),
         "PTS": pd.Series(dtype="float64"),
         "FG": pd.Series(dtype="float64"),
@@ -46,13 +47,14 @@ class DataAggregator():
             for game in games:
                 game_id = int(game['id'])
                 box_scores = ESPNClient.get_box_scores(game_id)
-                for team in box_scores:
-                    for player in team['statistics'][0]['athletes']:
-                        player_id = int(player['athlete']['id'])
-                        ESPNClient.format_box_score(player['stats'])
-                        row = [player_id, game_id, ESPNClient._format_date(date), int(player['didNotPlay'])]
-                        row.extend(player['stats'])
-                        rows.append(row)
+                if box_scores:
+                    for team in box_scores:
+                        for player in team['statistics'][0]['athletes']:
+                            player_id = int(player['athlete']['id'])
+                            ESPNClient.format_box_score(player['stats'])
+                            row = [game_id, ESPNClient._format_date(date), 1, player_id, int(not player['didNotPlay'])]
+                            row.extend(player['stats'])
+                            rows.append(row)
             date = ESPNClient.decrement_date(date)
         DataAggregator._add_to_game_log(pd.DataFrame(rows, columns=DataAggregator.game_log.columns))
         DataAggregator.save_game_log()

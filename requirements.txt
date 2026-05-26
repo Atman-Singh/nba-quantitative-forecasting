@@ -1,0 +1,6 @@
+torch
+numpy
+pandas
+requests
+nba_api
+pyarrow
