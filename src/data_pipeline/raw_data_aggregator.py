@@ -10,7 +10,7 @@ GAME_LOG_DIR = "data/game_logs"
 TIMESTAMP_FORMAT = r"%Y%m%d%H%M%S"
 CONFIG_PATH = os.path.join(GAME_LOG_DIR, "config.json")
 
-class DataAggregator():
+class RawDataAggregator():
     
     game_log = pd.DataFrame({
         "GAME_ID": pd.Series(dtype="int64"),
@@ -33,38 +33,50 @@ class DataAggregator():
         "PF": pd.Series(dtype="int64"),
         "PM": pd.Series(dtype="int64"),
     })
+    player_ids = pd.Series(dtype="int64")
 
     @staticmethod
     def _add_to_game_log(rows_df) -> None:
-        DataAggregator.game_log = pd.concat([DataAggregator.game_log, rows_df], ignore_index=True)
+        RawDataAggregator.game_log = pd.concat([RawDataAggregator.game_log, rows_df], ignore_index=True)
 
     @staticmethod
-    def build_player_game_logs() -> None:
+    def build_player_game_logs(years: int = 3, reload_date: int = None, save_step: int = None) -> None:
         rows = []
-        date = ESPNClient.get_current_date()
-        for _ in range(50):
+        if reload_date:
+            current_date = date = reload_date
+        else:
+            current_date = date = ESPNClient.get_current_date()
+        while (current_date - date).days <= years * 365:
+            print(date)
             games = ESPNClient.get_scoreboard(date)['events']
+            # TODO: parralelize fetching box scores for all games on a given date
             for game in games:
                 game_id = int(game['id'])
                 box_scores = ESPNClient.get_box_scores(game_id)
                 if box_scores:
                     for team in box_scores:
                         for player in team['statistics'][0]['athletes']:
-                            player_id = int(player['athlete']['id'])
+                            player_id = int(player['athlete'].get('id', -1))
+                            if player_id == -1:
+                                print('no id')
+                                continue
+
                             ESPNClient.format_box_score(player['stats'])
                             row = [game_id, ESPNClient._format_date(date), 1, player_id, int(not player['didNotPlay'])]
                             row.extend(player['stats'])
                             rows.append(row)
             date = ESPNClient.decrement_date(date)
-        DataAggregator._add_to_game_log(pd.DataFrame(rows, columns=DataAggregator.game_log.columns))
-        DataAggregator.save_game_log()
+
+            if save_step and (current_date - date).days % save_step == 0:
+                RawDataAggregator._add_to_game_log(pd.DataFrame(rows, columns=RawDataAggregator.game_log.columns))
+                RawDataAggregator.save_game_log()
     
     @staticmethod
     def save_game_log() -> None:
         name = "/game_log_" + datetime.now().strftime(TIMESTAMP_FORMAT) + '.parquet'
         path = GAME_LOG_DIR + name
         os.makedirs(GAME_LOG_DIR, exist_ok=True)
-        DataAggregator.game_log.to_parquet(
+        RawDataAggregator.game_log.to_parquet(
             path=path,
             engine="pyarrow",
             index=False
@@ -87,9 +99,19 @@ class DataAggregator():
         name = config['game_log_name']
 
         if columns:
-            DataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, 
+            RawDataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, 
                                    engine="pyarrow",
                                    columns=columns
                                    )
-        DataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, engine="pyarrow")
+        else:
+            RawDataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, engine="pyarrow")
+        
+        if not columns or 'PLAYER_ID' in columns:
+            RawDataAggregator.player_ids = RawDataAggregator.game_log['PLAYER_ID'].unique()
+    
+    @staticmethod
+    def get_players_game_on_date(player_id: int, date: datetime) -> pd.Series:
+        return RawDataAggregator.game_log[(RawDataAggregator.game_log['GAME_DATE'] == ESPNClient._format_date(date)) 
+                                          & (RawDataAggregator.game_log['PLAYER_ID'] == player_id)]
+
         

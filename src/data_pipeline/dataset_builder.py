@@ -1,4 +1,4 @@
-from .data_aggregator import DataAggregator
+from .raw_data_aggregator import RawDataAggregator
 from .espn_client import ESPNClient
 import torch
 from torch import tensor, Tensor
@@ -9,17 +9,39 @@ from typing import Tuple
 CONTEXT_WINDOW = 5
 FEATURES = 17
 
-class TrendBuilder:
+class DatasetBuilder:
 
     def __init__(self):
-        DataAggregator.load_game_log()
+        RawDataAggregator.load_game_log()
 
+    # build x years worth of overlapping sequences for every player in the league
+    def build_dataset(self, years: int = 3):
+        for player_id in RawDataAggregator.player_ids:
+            current_date = date = ESPNClient.get_current_date()
+            game, offset = None, -1
+            while game is None or game.empty:
+                game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
+                                                              date=date)
+                date = ESPNClient.decrement_date(date)
+                offset += 1
+            print(offset)
+            while (current_date - date).days <= years * 365 + offset:
+                print(player_id, date, game)
+                if game is not None and not game.empty:
+                    game_id = game["GAME_ID"].values[0]
+                    trends = self.build_player_trends(game_id, player_id)
+                    print(trends)
+
+                date = ESPNClient.decrement_date(date)
+                game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
+                                                              date=date)
+    
     def build_player_trends(self, game_id: int, poi_id: int) -> Tensor:
         game_date = ESPNClient.get_game_date(game_id)
         poi_data = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
 
         player_ids = ESPNClient.get_player_ids(game_id, poi_id)
-        num_players = max(len(player_ids[0]), len(player_ids[0]))
+        num_players = max(len(player_ids[0]), len(player_ids[1]))
         data = torch.empty((2, num_players, CONTEXT_WINDOW, FEATURES), 
                             dtype=torch.float32)
         for i, team_ids in enumerate(player_ids):
@@ -40,8 +62,8 @@ class TrendBuilder:
     
     def get_last_n_games(self, game_date: int, poi_id: int, n: int) -> Tuple[Tensor, DataFrame]:
         last_n_before_game = (
-            DataAggregator.game_log[(DataAggregator.game_log["GAME_DATE"] <= game_date) 
-                                    & (DataAggregator.game_log["PLAYER_ID"] == int(poi_id))]
+            RawDataAggregator.game_log[(RawDataAggregator.game_log["GAME_DATE"] <= game_date) 
+                                    & (RawDataAggregator.game_log["PLAYER_ID"] == int(poi_id))]
             .sort_values("GAME_DATE", ascending=False)
             .head(n)
         )

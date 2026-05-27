@@ -14,6 +14,8 @@ TEAMS = requests.get(TEAMS_URL).json()['sports'][0]['leagues'][0]['teams']
 CURRENT_YEAR = date.today().year
 DATE_FORMAT = "%Y%m%d"
 
+# TODO: cache API responses
+
 class ESPNClient: 
 
     @staticmethod
@@ -173,8 +175,10 @@ class ESPNClient:
         return datetime.today()
 
     @staticmethod
-    def decrement_date(date: datetime):
-        return date - dt.timedelta(days=1)
+    def decrement_date(date: datetime, increment: int = 1) -> datetime:
+        if increment < 1:
+            print('increment must be greater than 0')
+        return date - dt.timedelta(days=increment)
     
     @staticmethod
     def get_game_date(game_id: int) -> int:
