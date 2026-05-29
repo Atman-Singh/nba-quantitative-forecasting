@@ -9,9 +9,9 @@ from data_pipeline.dataset_builder import DatasetBuilder
 
 def main():
     trend_builder = DatasetBuilder()
-    trend_builder.build_dataset()
+    # trend_builder.build_dataset()
     # print(DataAggregator.game_log)
-    # print(trend_builder.build_player_trends(game_id=401873343, poi_id=4222252)[1])
+    trend_builder.build_player_trends(game_id=401873343, poi_id=4222252)[1]
     
 
 if __name__ == "__main__":

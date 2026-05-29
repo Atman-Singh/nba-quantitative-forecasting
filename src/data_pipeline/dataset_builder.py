@@ -1,21 +1,26 @@
-from .raw_data_aggregator import RawDataAggregator
-from .espn_client import ESPNClient
 import torch
 from torch import tensor, Tensor
 import torch.nn.functional as F
 from pandas import DataFrame
 from typing import Tuple
 
+from .raw_data_aggregator import RawDataAggregator
+from .espn_client import ESPNClient
+
 CONTEXT_WINDOW = 5
 FEATURES = 17
 
 class DatasetBuilder:
-
+    
     def __init__(self):
         RawDataAggregator.load_game_log()
+        self.total = 0
+        self.cache_accesses = 0
+        self.trend_cache = {}
+        self.id_cache = {}
 
     # build x years worth of overlapping sequences for every player in the league
-    def build_dataset(self, years: int = 3):
+    def build_dataset(self, years: int = 3): 
         for player_id in RawDataAggregator.player_ids:
             current_date = date = ESPNClient.get_current_date()
             game, offset = None, -1
@@ -24,13 +29,14 @@ class DatasetBuilder:
                                                               date=date)
                 date = ESPNClient.decrement_date(date)
                 offset += 1
-            print(offset)
+                
             while (current_date - date).days <= years * 365 + offset:
-                print(player_id, date, game)
+                if (game.empty):
+                    print('empty')
+                print(player_id, date)
                 if game is not None and not game.empty:
                     game_id = game["GAME_ID"].values[0]
                     trends = self.build_player_trends(game_id, player_id)
-                    print(trends)
 
                 date = ESPNClient.decrement_date(date)
                 game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
@@ -46,6 +52,14 @@ class DatasetBuilder:
                             dtype=torch.float32)
         for i, team_ids in enumerate(player_ids):
             for j, player_id in enumerate(team_ids):
+                self.total += 1
+                key = (player_id, game_date)
+                if key in self.trend_cache:
+                    print(f'Accessed cache, cache len {len(self.trend_cache)}')
+                    self.cache_accesses += 1
+                    data[i][j] = self.trend_cache[key]
+                    continue  
+                      
                 last_n = self.get_last_n_games(game_date=game_date, 
                                                     poi_id=player_id, 
                                                     n=CONTEXT_WINDOW)[0]
@@ -55,7 +69,7 @@ class DatasetBuilder:
                         last_n,
                         (0, 0, 0, CONTEXT_WINDOW - num_rows)
                     )
-                data[i][j] = last_n
+                data[i][j] = self.trend_cache[key] = last_n
         
         return poi_data, data
 

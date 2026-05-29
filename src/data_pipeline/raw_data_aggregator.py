@@ -1,10 +1,11 @@
-from .espn_client import ESPNClient
 import numpy as np
 from torch import tensor
 import pandas as pd
 from datetime import datetime
 import os
 import json
+
+from .espn_client import ESPNClient
 
 GAME_LOG_DIR = "data/game_logs"
 TIMESTAMP_FORMAT = r"%Y%m%d%H%M%S"
