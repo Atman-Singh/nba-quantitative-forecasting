@@ -8,7 +8,9 @@ from data_pipeline.raw_data_aggregator import RawDataAggregator
 from data_pipeline.dataset_builder import DatasetBuilder
 
 def main():
-    RawDataAggregator.build_player_game_logs(years=5, save_step=20)
+    # RawDataAggregator.build_game_log(years=5, reload=True, save_step=100)
+    RawDataAggregator.load_game_log()
+    RawDataAggregator.build_mpg_table()
 
 if __name__ == "__main__":
     main()

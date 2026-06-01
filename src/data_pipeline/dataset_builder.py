@@ -3,12 +3,17 @@ from torch import tensor, Tensor
 import torch.nn.functional as F
 from pandas import DataFrame
 from typing import Tuple
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from utils.params import CONTEXT_WINDOW
 from .raw_data_aggregator import RawDataAggregator
 from .espn_client import ESPNClient
 
-CONTEXT_WINDOW = 5
 FEATURES = 17
+MAX_ROSTER_SIZE = 8
 
 class DatasetBuilder:
     
@@ -16,8 +21,7 @@ class DatasetBuilder:
         RawDataAggregator.load_game_log()
         self.total = 0
         self.cache_accesses = 0
-        self.trend_cache = {}
-        self.id_cache = {}
+        self.cache = {}
 
     # build x years worth of overlapping sequences for every player in the league
     def build_dataset(self, years: int = 3): 
@@ -47,17 +51,16 @@ class DatasetBuilder:
         poi_data = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
 
         player_ids = ESPNClient.get_player_ids(game_id, poi_id)
-        num_players = max(len(player_ids[0]), len(player_ids[1]))
-        data = torch.empty((2, num_players, CONTEXT_WINDOW, FEATURES), 
+        data = torch.empty((2, MAX_ROSTER_SIZE, CONTEXT_WINDOW, FEATURES), 
                             dtype=torch.float32)
         for i, team_ids in enumerate(player_ids):
             for j, player_id in enumerate(team_ids):
                 self.total += 1
                 key = (player_id, game_date)
-                if key in self.trend_cache:
-                    print(f'Accessed cache, cache len {len(self.trend_cache)}')
+                if key in self.cache:
+                    print(f'Accessed cache, cache len {len(self.cache)}')
                     self.cache_accesses += 1
-                    data[i][j] = self.trend_cache[key]
+                    data[i][j] = self.cache[key]
                     continue  
                       
                 last_n = self.get_last_n_games(game_date=game_date, 
@@ -69,7 +72,7 @@ class DatasetBuilder:
                         last_n,
                         (0, 0, 0, CONTEXT_WINDOW - num_rows)
                     )
-                data[i][j] = self.trend_cache[key] = last_n
+                data[i][j] = self.cache[key] = last_n
         
         return poi_data, data
 

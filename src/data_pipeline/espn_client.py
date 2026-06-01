@@ -10,6 +10,7 @@ FEATURES = 14
 TEAMS_URL = 'http://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
 SCOREBOARD_URL = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard'
 BOX_SCORES_URL = 'http://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event='
+ATHLETES_URL = 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/athletes/'
 TEAMS = requests.get(TEAMS_URL).json()['sports'][0]['leagues'][0]['teams']
 CURRENT_YEAR = date.today().year
 DATE_FORMAT = "%Y%m%d"
@@ -20,7 +21,10 @@ class ESPNClient:
 
     @staticmethod
     def get_scoreboard(date: datetime) -> dict:
-        return requests.get(SCOREBOARD_URL, params={'dates':str(ESPNClient._format_date(date))}).json()
+        params = {'dates':str(ESPNClient._format_date(date))}
+        print(SCOREBOARD_URL)
+        print(params)
+        return requests.get(SCOREBOARD_URL, params=params).json()
     
     @staticmethod
     def _format_team_name(team_name: str):
@@ -91,14 +95,17 @@ class ESPNClient:
             try:
                 box_score[i] = int(stat)
             except:
-                if stat == '--':
-                    box_score[i] = 0
-                else:
-                    div = stat.split('-')
-                    if int(div[1]) == 0:
+                try:
+                    if stat == '--':
                         box_score[i] = 0
                     else:
-                        box_score[i] = int(div[0]) / int(div[1])
+                        div = stat.split('-')
+                        if int(div[1]) == 0:
+                            box_score[i] = 0
+                        else:
+                            box_score[i] = int(div[0]) / int(div[1])
+                except:
+                    box_score[i] = 0
 
     @staticmethod
     def _get_player_box_scores(game_ids: list, player_id: str, team_id: int) -> tensor:
@@ -126,6 +133,7 @@ class ESPNClient:
     @staticmethod
     def get_box_scores(game_id: int):
         url = BOX_SCORES_URL + str(game_id)
+        print(url)
         try:
             return requests.get(url=url).json()['boxscore']['players']
         except KeyError:
@@ -190,3 +198,12 @@ class ESPNClient:
         )
         
         return ESPNClient._format_date(dt)
+
+    @staticmethod
+    def get_date_format() -> str:
+        return DATE_FORMAT
+    
+    @staticmethod
+    def get_player_name(player_id: int) -> str:
+        url = ATHLETES_URL + str(player_id)
+        return requests.get(url=url).json()['displayName']

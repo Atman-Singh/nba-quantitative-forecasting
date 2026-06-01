@@ -4,7 +4,12 @@ import pandas as pd
 from datetime import datetime
 import os
 import json
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from utils.params import CONTEXT_WINDOW
 from .espn_client import ESPNClient
 
 GAME_LOG_DIR = "data/game_logs"
@@ -41,15 +46,27 @@ class RawDataAggregator():
         RawDataAggregator.game_log = pd.concat([RawDataAggregator.game_log, rows_df], ignore_index=True)
 
     @staticmethod
-    def build_player_game_logs(years: int = 3, reload_date: int = None, save_step: int = None) -> None:
+    def build_game_log(years: int = 3, reload: bool = False, save_step: int = None) -> None:
         rows = []
-        if reload_date:
-            current_date = date = reload_date
-        else:
+        current_date = None
+        if reload:
+            current_date = date = datetime.strptime(
+                RawDataAggregator.load_save_date(),
+                "%Y-%m-%d %H:%M:%S.%f"
+            )
+        
+        if current_date == None:
             current_date = date = ESPNClient.get_current_date()
+        else:
+            RawDataAggregator.load_game_log()
+
+
         while (current_date - date).days <= years * 365:
             print(date)
-            games = ESPNClient.get_scoreboard(date)['events']
+            try:
+                games = ESPNClient.get_scoreboard(date)['events']
+            except KeyError:
+                print('no games on ' + str(date))
             # TODO: parralelize fetching box scores for all games on a given date
             for game in games:
                 game_id = int(game['id'])
@@ -66,14 +83,19 @@ class RawDataAggregator():
                             row = [game_id, ESPNClient._format_date(date), 1, player_id, int(not player['didNotPlay'])]
                             row.extend(player['stats'])
                             rows.append(row)
+            print()
             date = ESPNClient.decrement_date(date)
 
             if save_step and (current_date - date).days % save_step == 0:
                 RawDataAggregator._add_to_game_log(pd.DataFrame(rows, columns=RawDataAggregator.game_log.columns))
-                RawDataAggregator.save_game_log()
+                RawDataAggregator.save_game_log(str(date))
+                rows = []
+            
+        RawDataAggregator._add_to_game_log(pd.DataFrame(rows, columns=RawDataAggregator.game_log.columns))
+        RawDataAggregator.save_game_log()
     
     @staticmethod
-    def save_game_log() -> None:
+    def save_game_log(save_date: str = None) -> None:
         name = "/game_log_" + datetime.now().strftime(TIMESTAMP_FORMAT) + '.parquet'
         path = GAME_LOG_DIR + name
         os.makedirs(GAME_LOG_DIR, exist_ok=True)
@@ -87,17 +109,31 @@ class RawDataAggregator():
         if os.path.exists(CONFIG_PATH):
             with open(CONFIG_PATH, 'r') as f:
                 config = json.load(f)
+
         config['game_log_name'] = name
+        config['save_date'] = save_date if save_date else 'none'
+
         with open(CONFIG_PATH, "w") as f:
             json.dump(config, f)
 
         print('Game log saved to ' + path)
+
+
+    @staticmethod
+    def load_save_name() -> str:
+        with open(CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+        return config['game_log_name']
+
+    @staticmethod
+    def load_save_date() -> str | None:
+        with open(CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+        return None if config['save_date'] == 'none' else config['save_date']
     
     @staticmethod
     def load_game_log(columns: list = None) -> None:
-        with open(CONFIG_PATH, 'r') as f:
-            config = json.load(f)
-        name = config['game_log_name']
+        name = RawDataAggregator.load_save_name()
 
         if columns:
             RawDataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, 
@@ -114,5 +150,25 @@ class RawDataAggregator():
     def get_players_game_on_date(player_id: int, date: datetime) -> pd.Series:
         return RawDataAggregator.game_log[(RawDataAggregator.game_log['GAME_DATE'] == ESPNClient._format_date(date)) 
                                           & (RawDataAggregator.game_log['PLAYER_ID'] == player_id)]
+    
+    @staticmethod
+    def build_mpg_table():
+        mpg_table = {}
+        for player_id in RawDataAggregator.player_ids:
+            print(ESPNClient.get_player_name(player_id))
+            player_minutes = RawDataAggregator.game_log[RawDataAggregator.game_log['PLAYER_ID'] == player_id][['GAME_DATE', 'MIN']]
+            
+            current_date = ESPNClient.get_current_date()
+            min_date = datetime.strptime(
+                str(RawDataAggregator.game_log['GAME_DATE'].sort_values(ascending=True).iloc[0]),
+                ESPNClient.get_date_format()
+            )
+            while current_date >= min_date:
+                f_current_date = ESPNClient._format_date(current_date)
+                window = player_minutes[player_minutes['GAME_DATE'] <= f_current_date]['MIN'].head(CONTEXT_WINDOW)
+                mpg_table[(player_id, f_current_date)] = window.mean()
+                current_date = ESPNClient.decrement_date(current_date)
+            
+            
 
         
