@@ -1,1 +1,2 @@
-*.parquet
+data/game_logs/*.parquet
+data/game_logs/config.json

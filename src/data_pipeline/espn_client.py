@@ -22,8 +22,6 @@ class ESPNClient:
     @staticmethod
     def get_scoreboard(date: datetime) -> dict:
         params = {'dates':str(ESPNClient._format_date(date))}
-        print(SCOREBOARD_URL)
-        print(params)
         return requests.get(SCOREBOARD_URL, params=params).json()
     
     @staticmethod
@@ -133,7 +131,6 @@ class ESPNClient:
     @staticmethod
     def get_box_scores(game_id: int):
         url = BOX_SCORES_URL + str(game_id)
-        print(url)
         try:
             return requests.get(url=url).json()['boxscore']['players']
         except KeyError:
@@ -192,7 +189,6 @@ class ESPNClient:
     def get_game_date(game_id: int) -> int:
         url = BOX_SCORES_URL + str(game_id)
         summary = requests.get(url=url).json()["header"]["competitions"][0]["date"]
-
         dt = datetime.fromisoformat(
             summary.replace("Z", "+00:00")
         )

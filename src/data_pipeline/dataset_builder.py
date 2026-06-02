@@ -37,24 +37,30 @@ class DatasetBuilder:
             while (current_date - date).days <= years * 365 + offset:
                 if (game.empty):
                     print('empty')
-                print(player_id, date)
                 if game is not None and not game.empty:
                     game_id = game["GAME_ID"].values[0]
-                    trends = self.build_player_trends(game_id, player_id)
+                    data = self.build_player_trends(game_id, player_id)
 
                 date = ESPNClient.decrement_date(date)
                 game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
                                                               date=date)
     
     def build_player_trends(self, game_id: int, poi_id: int) -> Tensor:
+        data = torch.zeros((3, MAX_ROSTER_SIZE, CONTEXT_WINDOW, FEATURES), 
+                            dtype=torch.float32)
         game_date = ESPNClient.get_game_date(game_id)
-        poi_data = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
+        data[0][0] = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
 
         player_ids = ESPNClient.get_player_ids(game_id, poi_id)
-        data = torch.empty((2, MAX_ROSTER_SIZE, CONTEXT_WINDOW, FEATURES), 
-                            dtype=torch.float32)
         for i, team_ids in enumerate(player_ids):
-            for j, player_id in enumerate(team_ids):
+            RawDataAggregator.load_mpg_table()
+            top_k_ids = DataFrame(columns=["PLAYER_IDS", "MPG"])
+            top_k_ids["PLAYER_IDS"] = team_ids
+            top_k_ids["MPG"] = [RawDataAggregator.get_player_mpg(i, game_date) for i in top_k_ids["PLAYER_IDS"]]
+            top_k_ids = top_k_ids.sort_values("MPG", ascending=False).head(MAX_ROSTER_SIZE)
+            print(top_k_ids)
+
+            for j, player_id in enumerate(top_k_ids['PLAYER_IDS']):
                 self.total += 1
                 key = (player_id, game_date)
                 if key in self.cache:
@@ -74,7 +80,7 @@ class DatasetBuilder:
                     )
                 data[i][j] = self.cache[key] = last_n
         
-        return poi_data, data
+        return data
 
     
     def get_last_n_games(self, game_date: int, poi_id: int, n: int) -> Tuple[Tensor, DataFrame]:

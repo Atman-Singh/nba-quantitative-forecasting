@@ -1,7 +1,7 @@
 import numpy as np
 from torch import tensor
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 import sys
@@ -13,6 +13,8 @@ from utils.params import CONTEXT_WINDOW
 from .espn_client import ESPNClient
 
 GAME_LOG_DIR = "data/game_logs"
+MPG_TABLE_DIR = "data/mpg_tables/"
+MPG_TABLE_PATH = MPG_TABLE_DIR + 'mpg_table.json'
 TIMESTAMP_FORMAT = r"%Y%m%d%H%M%S"
 CONFIG_PATH = os.path.join(GAME_LOG_DIR, "config.json")
 
@@ -40,6 +42,7 @@ class RawDataAggregator():
         "PM": pd.Series(dtype="int64"),
     })
     player_ids = pd.Series(dtype="int64")
+    mpg_table = {}
 
     @staticmethod
     def _add_to_game_log(rows_df) -> None:
@@ -62,7 +65,6 @@ class RawDataAggregator():
 
 
         while (current_date - date).days <= years * 365:
-            print(date)
             try:
                 games = ESPNClient.get_scoreboard(date)['events']
             except KeyError:
@@ -83,7 +85,6 @@ class RawDataAggregator():
                             row = [game_id, ESPNClient._format_date(date), 1, player_id, int(not player['didNotPlay'])]
                             row.extend(player['stats'])
                             rows.append(row)
-            print()
             date = ESPNClient.decrement_date(date)
 
             if save_step and (current_date - date).days % save_step == 0:
@@ -152,23 +153,56 @@ class RawDataAggregator():
                                           & (RawDataAggregator.game_log['PLAYER_ID'] == player_id)]
     
     @staticmethod
-    def build_mpg_table():
+    def build_mpg_table() -> None:
         mpg_table = {}
         for player_id in RawDataAggregator.player_ids:
             print(ESPNClient.get_player_name(player_id))
-            player_minutes = RawDataAggregator.game_log[RawDataAggregator.game_log['PLAYER_ID'] == player_id][['GAME_DATE', 'MIN']]
-            
-            current_date = ESPNClient.get_current_date()
-            min_date = datetime.strptime(
-                str(RawDataAggregator.game_log['GAME_DATE'].sort_values(ascending=True).iloc[0]),
-                ESPNClient.get_date_format()
-            )
-            while current_date >= min_date:
-                f_current_date = ESPNClient._format_date(current_date)
-                window = player_minutes[player_minutes['GAME_DATE'] <= f_current_date]['MIN'].head(CONTEXT_WINDOW)
-                mpg_table[(player_id, f_current_date)] = window.mean()
-                current_date = ESPNClient.decrement_date(current_date)
-            
-            
+            player_minutes = RawDataAggregator.game_log[RawDataAggregator.game_log['PLAYER_ID'] == player_id][['GAME_DATE', 'MIN']].sort_values("GAME_DATE", ascending=False)
+            for date in player_minutes['GAME_DATE']:
+                window = player_minutes[player_minutes['GAME_DATE'] <= date].head(CONTEXT_WINDOW)['MIN']
+                key, value = int(player_id), float(window.mean())
+                if key not in mpg_table:
+                    mpg_table[key] = {
+                        int(date): value
+                    }
+                else:
+                    mpg_table[key][date] = value
 
+        os.makedirs(MPG_TABLE_DIR, exist_ok=True)
+        with open(MPG_TABLE_PATH, 'w') as f:
+            json.dump(mpg_table, f)
+    
+    @staticmethod
+    def load_mpg_table() -> None:
+        os.makedirs(MPG_TABLE_DIR, exist_ok=True)
+        with open(MPG_TABLE_PATH, 'r') as f:
+            data = json.load(f)
+            RawDataAggregator.mpg_table = {
+                int(player_id): {int(date): float(value) for date, value in dates.items()}
+                for player_id, dates in data.items()
+            }
+
+    @staticmethod
+    def get_player_mpg(player_id: int, game_date: int, timezone_offset_days: int = 1) -> float:
+        if player_id not in RawDataAggregator.mpg_table:
+            raise KeyError(f"Player {player_id} not found in mpg_table")
         
+        player_dates = RawDataAggregator.mpg_table[player_id]
+        
+        if game_date in player_dates:
+            return player_dates[game_date]
+        
+        game_date_dt = datetime.strptime(str(game_date), ESPNClient.get_date_format())
+        for offset in range(1, timezone_offset_days + 1):
+            for offset_val in [-offset, offset]:
+                offset_date_dt = game_date_dt + timedelta(days=offset_val)
+                offset_date_int = int(offset_date_dt.strftime("%Y%m%d"))
+                if offset_date_int in player_dates:
+                    return player_dates[offset_date_int]
+        
+        print(f"No MPG found for player {player_id} on date {game_date} or nearby dates")
+        try:
+            key = RawDataAggregator.mpg_table[player_id].keys()[0]
+        except:
+            return None
+        return RawDataAggregator.mpg_table[player_id][key]
