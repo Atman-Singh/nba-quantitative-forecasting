@@ -3,17 +3,21 @@ from torch import tensor, Tensor
 import torch.nn.functional as F
 from pandas import DataFrame
 from typing import Tuple
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from utils.datetime_helpers import DatetimeHelpers
 from utils.params import CONTEXT_WINDOW
 from .raw_data_aggregator import RawDataAggregator
 from .espn_client import ESPNClient
 
 FEATURES = 17
 MAX_ROSTER_SIZE = 8
+GAMES_PER_YEAR = 60
+DATASET_DIR = r"data/datasets"
 
 class DatasetBuilder:
     
@@ -22,43 +26,67 @@ class DatasetBuilder:
         self.total = 0
         self.cache_accesses = 0
         self.cache = {}
+        self.dataset = None
 
     # build x years worth of overlapping sequences for every player in the league
-    def build_dataset(self, years: int = 3): 
-        for player_id in RawDataAggregator.player_ids:
-            current_date = date = ESPNClient.get_current_date()
+    def build_dataset(self, years: int = 3) -> None:
+        num_players = len(RawDataAggregator.player_ids)
+        max_games = GAMES_PER_YEAR * years
+        dataset = torch.zeros((num_players, 
+                            max_games,
+                            3, 
+                            MAX_ROSTER_SIZE, 
+                            CONTEXT_WINDOW, 
+                            FEATURES), 
+                            dtype=torch.float32) 
+        
+        for i, player_id in enumerate(RawDataAggregator.player_ids):
+            current_date = date = DatetimeHelpers.get_current_date()
             game, offset = None, -1
             while game is None or game.empty:
                 game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
                                                               date=date)
-                date = ESPNClient.decrement_date(date)
+                date = DatetimeHelpers.decrement_date(date)
                 offset += 1
-                
-            while (current_date - date).days <= years * 365 + offset:
+            
+            j = 0
+            while j < max_games and ((current_date - date).days <= years * 365 + offset):
                 if (game.empty):
                     print('empty')
                 if game is not None and not game.empty:
                     game_id = game["GAME_ID"].values[0]
-                    data = self.build_player_trends(game_id, player_id)
+                    dataset[i][j] = self.build_player_trends(game_id, player_id, dataset[i][j])
+                    j += 1
 
-                date = ESPNClient.decrement_date(date)
+                date = DatetimeHelpers.decrement_date(date)
                 game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
                                                               date=date)
-    
-    def build_player_trends(self, game_id: int, poi_id: int) -> Tensor:
-        data = torch.zeros((3, MAX_ROSTER_SIZE, CONTEXT_WINDOW, FEATURES), 
-                            dtype=torch.float32)
+                
+        self.dataset = self.dataset
+        self.save_dataset()
+        
+    def save_dataset(self) -> None:
+        try:
+            os.makedirs(DATASET_DIR, exist_ok=True)
+            dataset_path = DATASET_DIR + "/dataset" + DatetimeHelpers.get_timestamp() + '.pt'
+            torch.save(self.dataset, dataset_path)
+            print(f"Dataset saved at {dataset_path}")
+        except Exception as e:
+            print(f"Unexpected error while saving dataset: {e}")
+            
+        
+
+    def build_player_trends(self, game_id: int, poi_id: int, data: Tensor) -> Tensor:
         game_date = ESPNClient.get_game_date(game_id)
         data[0][0] = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
 
         player_ids = ESPNClient.get_player_ids(game_id, poi_id)
-        for i, team_ids in enumerate(player_ids):
+        for i, team_ids in enumerate(player_ids, start=1):
             RawDataAggregator.load_mpg_table()
             top_k_ids = DataFrame(columns=["PLAYER_IDS", "MPG"])
             top_k_ids["PLAYER_IDS"] = team_ids
             top_k_ids["MPG"] = [RawDataAggregator.get_player_mpg(i, game_date) for i in top_k_ids["PLAYER_IDS"]]
             top_k_ids = top_k_ids.sort_values("MPG", ascending=False).head(MAX_ROSTER_SIZE)
-            print(top_k_ids)
 
             for j, player_id in enumerate(top_k_ids['PLAYER_IDS']):
                 self.total += 1
@@ -79,7 +107,6 @@ class DatasetBuilder:
                         (0, 0, 0, CONTEXT_WINDOW - num_rows)
                     )
                 data[i][j] = self.cache[key] = last_n
-        
         return data
 
     

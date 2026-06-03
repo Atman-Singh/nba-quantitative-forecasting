@@ -4,7 +4,12 @@ from datetime import datetime
 from datetime import date
 import torch
 from torch import tensor
-import requests.exceptions
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from utils.datetime_helpers import DatetimeHelpers
 
 FEATURES = 14
 TEAMS_URL = 'http://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
@@ -13,7 +18,7 @@ BOX_SCORES_URL = 'http://site.api.espn.com/apis/site/v2/sports/basketball/nba/su
 ATHLETES_URL = 'https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/athletes/'
 TEAMS = requests.get(TEAMS_URL).json()['sports'][0]['leagues'][0]['teams']
 CURRENT_YEAR = date.today().year
-DATE_FORMAT = "%Y%m%d"
+
 
 # TODO: cache API responses
 
@@ -21,7 +26,7 @@ class ESPNClient:
 
     @staticmethod
     def get_scoreboard(date: datetime) -> dict:
-        params = {'dates':str(ESPNClient._format_date(date))}
+        params = {'dates':str(DatetimeHelpers._format_date(date))}
         return requests.get(SCOREBOARD_URL, params=params).json()
     
     @staticmethod
@@ -172,20 +177,6 @@ class ESPNClient:
         return teammates, opponents
     
     @staticmethod
-    def _format_date(date: datetime) -> int:
-        return int(date.strftime(DATE_FORMAT))
-
-    @staticmethod
-    def get_current_date() -> datetime:
-        return datetime.today()
-
-    @staticmethod
-    def decrement_date(date: datetime, increment: int = 1) -> datetime:
-        if increment < 1:
-            print('increment must be greater than 0')
-        return date - dt.timedelta(days=increment)
-    
-    @staticmethod
     def get_game_date(game_id: int) -> int:
         url = BOX_SCORES_URL + str(game_id)
         summary = requests.get(url=url).json()["header"]["competitions"][0]["date"]
@@ -193,11 +184,7 @@ class ESPNClient:
             summary.replace("Z", "+00:00")
         )
         
-        return ESPNClient._format_date(dt)
-
-    @staticmethod
-    def get_date_format() -> str:
-        return DATE_FORMAT
+        return DatetimeHelpers._format_date(dt)
     
     @staticmethod
     def get_player_name(player_id: int) -> str:

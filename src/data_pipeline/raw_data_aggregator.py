@@ -9,13 +9,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from utils.datetime_helpers import DatetimeHelpers
 from utils.params import CONTEXT_WINDOW
 from .espn_client import ESPNClient
 
 GAME_LOG_DIR = "data/game_logs"
 MPG_TABLE_DIR = "data/mpg_tables/"
 MPG_TABLE_PATH = MPG_TABLE_DIR + 'mpg_table.json'
-TIMESTAMP_FORMAT = r"%Y%m%d%H%M%S"
 CONFIG_PATH = os.path.join(GAME_LOG_DIR, "config.json")
 
 class RawDataAggregator():
@@ -59,7 +59,7 @@ class RawDataAggregator():
             )
         
         if current_date == None:
-            current_date = date = ESPNClient.get_current_date()
+            current_date = date = DatetimeHelpers.get_current_date()
         else:
             RawDataAggregator.load_game_log()
 
@@ -82,10 +82,10 @@ class RawDataAggregator():
                                 continue
 
                             ESPNClient.format_box_score(player['stats'])
-                            row = [game_id, ESPNClient._format_date(date), 1, player_id, int(not player['didNotPlay'])]
+                            row = [game_id, DatetimeHelpers._format_date(date), 1, player_id, int(not player['didNotPlay'])]
                             row.extend(player['stats'])
                             rows.append(row)
-            date = ESPNClient.decrement_date(date)
+            date = DatetimeHelpers.decrement_date(date)
 
             if save_step and (current_date - date).days % save_step == 0:
                 RawDataAggregator._add_to_game_log(pd.DataFrame(rows, columns=RawDataAggregator.game_log.columns))
@@ -97,7 +97,7 @@ class RawDataAggregator():
     
     @staticmethod
     def save_game_log(save_date: str = None) -> None:
-        name = "/game_log_" + datetime.now().strftime(TIMESTAMP_FORMAT) + '.parquet'
+        name = "/game_log_" + DatetimeHelpers.get_timestamp() + '.parquet'
         path = GAME_LOG_DIR + name
         os.makedirs(GAME_LOG_DIR, exist_ok=True)
         RawDataAggregator.game_log.to_parquet(
@@ -149,7 +149,7 @@ class RawDataAggregator():
     
     @staticmethod
     def get_players_game_on_date(player_id: int, date: datetime) -> pd.Series:
-        return RawDataAggregator.game_log[(RawDataAggregator.game_log['GAME_DATE'] == ESPNClient._format_date(date)) 
+        return RawDataAggregator.game_log[(RawDataAggregator.game_log['GAME_DATE'] == DatetimeHelpers._format_date(date)) 
                                           & (RawDataAggregator.game_log['PLAYER_ID'] == player_id)]
     
     @staticmethod
@@ -192,7 +192,7 @@ class RawDataAggregator():
         if game_date in player_dates:
             return player_dates[game_date]
         
-        game_date_dt = datetime.strptime(str(game_date), ESPNClient.get_date_format())
+        game_date_dt = datetime.strptime(str(game_date), DatetimeHelpers.get_date_format())
         for offset in range(1, timezone_offset_days + 1):
             for offset_val in [-offset, offset]:
                 offset_date_dt = game_date_dt + timedelta(days=offset_val)
