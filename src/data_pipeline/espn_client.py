@@ -156,8 +156,11 @@ class ESPNClient:
             if poi_team_id == -2:
                 poi_team_id = cur_team_id
             for i, entry in enumerate(team['statistics'][0]['athletes']):
-                cur_id = entry['athlete']['id']
-                cur_n = entry['athlete']['displayName']
+                try:
+                    cur_id = entry['athlete']['id']
+                except KeyError:
+                    print('No ID')
+                    continue
                 if poi_team_id == -1:
                     if cur_id == player_id:
                         teammates = temp

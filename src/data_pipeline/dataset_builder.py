@@ -4,20 +4,20 @@ import torch.nn.functional as F
 from pandas import DataFrame
 from typing import Tuple
 import os
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.datetime_helpers import DatetimeHelpers
-from utils.params import CONTEXT_WINDOW
+from utils.params import MAX_ROSTER_SIZE, CONTEXT_WINDOW, FEATURES
 from .raw_data_aggregator import RawDataAggregator
 from .espn_client import ESPNClient
 
-FEATURES = 17
-MAX_ROSTER_SIZE = 8
 GAMES_PER_YEAR = 60
 DATASET_DIR = r"data/datasets"
+DATASET_CONFIG_PATH = os.path.join(DATASET_DIR, "config.json")
 
 class DatasetBuilder:
     
@@ -29,28 +29,43 @@ class DatasetBuilder:
         self.dataset = None
 
     # build x years worth of overlapping sequences for every player in the league
-    def build_dataset(self, years: int = 3) -> None:
+    def build_dataset(self, years: int = 3, reload: bool = False, save_step: int = None) -> None:
         num_players = len(RawDataAggregator.player_ids)
         max_games = GAMES_PER_YEAR * years
-        dataset = torch.zeros((num_players, 
-                            max_games,
-                            3, 
-                            MAX_ROSTER_SIZE, 
-                            CONTEXT_WINDOW, 
-                            FEATURES), 
-                            dtype=torch.float32) 
+
+        start_i = 0
+        if reload:
+            start_i = self.load_save_index()
+            self.load_dataset()
+            dataset = self.dataset
+        else:
+            dataset = torch.zeros((num_players,
+                                max_games,
+                                3,
+                                MAX_ROSTER_SIZE,
+                                CONTEXT_WINDOW,
+                                FEATURES),
+                                dtype=torch.float32)
         
         for i, player_id in enumerate(RawDataAggregator.player_ids):
+            if i < start_i:
+                continue
+
             current_date = date = DatetimeHelpers.get_current_date()
             game, offset = None, -1
             while game is None or game.empty:
+                if (current_date - date).days > years * 365:
+                    break
                 game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
                                                               date=date)
                 date = DatetimeHelpers.decrement_date(date)
                 offset += 1
-            
+
+            if game is None or game.empty:
+                continue
+
             j = 0
-            while j < max_games and ((current_date - date).days <= years * 365 + offset):
+            while j < max_games and ((current_date - date).days <= years * 365):
                 if (game.empty):
                     print('empty')
                 if game is not None and not game.empty:
@@ -61,24 +76,54 @@ class DatasetBuilder:
                 date = DatetimeHelpers.decrement_date(date)
                 game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
                                                               date=date)
+
+            if save_step and (i + 1) % save_step == 0:
+                self.dataset = dataset
+                self.save_dataset(save_index=i + 1)
+                print(f"Checkpoint saved after player index {i + 1}")
                 
-        self.dataset = self.dataset
+        self.dataset = dataset
         self.save_dataset()
         
-    def save_dataset(self) -> None:
-        try:
-            os.makedirs(DATASET_DIR, exist_ok=True)
-            dataset_path = DATASET_DIR + "/dataset" + DatetimeHelpers.get_timestamp() + '.pt'
-            torch.save(self.dataset, dataset_path)
-            print(f"Dataset saved at {dataset_path}")
-        except Exception as e:
-            print(f"Unexpected error while saving dataset: {e}")
+    def save_dataset(self, save_index: int = None) -> None:
+        os.makedirs(DATASET_DIR, exist_ok=True)
+        for f in Path(DATASET_DIR).glob("*.pt"):
+            f.unlink()
+        name = "/dataset_" + DatetimeHelpers.get_timestamp() + '.pt'
+        dataset_path = DATASET_DIR + name
+        torch.save(self.dataset, dataset_path)
+        print(f"Dataset saved at {dataset_path}")
+
+        config = {}
+        if os.path.exists(DATASET_CONFIG_PATH):
+            with open(DATASET_CONFIG_PATH, 'r') as f:
+                config = json.load(f)
+
+        config['dataset_name'] = name
+        config['save_index'] = save_index if save_index is not None else 'none'
+
+        with open(DATASET_CONFIG_PATH, 'w') as f:
+            json.dump(config, f)
+
+    def load_save_index(self) -> int:
+        with open(DATASET_CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+        return 0 if config['save_index'] == 'none' else config['save_index']
+
+    def load_dataset(self) -> None:
+        with open(DATASET_CONFIG_PATH, 'r') as f:
+            config = json.load(f)
+        name = config['dataset_name']
+        self.dataset = torch.load(DATASET_DIR + name, weights_only=True)
             
         
 
     def build_player_trends(self, game_id: int, poi_id: int, data: Tensor) -> Tensor:
         game_date = ESPNClient.get_game_date(game_id)
-        data[0][0] = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
+        print(data.shape)
+        last_5 = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
+        print(last_5.shape)
+        data[0][0] = last_5
 
         player_ids = ESPNClient.get_player_ids(game_id, poi_id)
         for i, team_ids in enumerate(player_ids, start=1):
@@ -120,4 +165,11 @@ class DatasetBuilder:
         col_i = last_n_before_game.shape[1] - FEATURES
         data = tensor(last_n_before_game.iloc[:, col_i:].values, dtype=torch.float32)
         metadata = last_n_before_game.iloc[:, :col_i]
+
+        num_rows = data.shape[0]
+        if num_rows < n:
+            data = F.pad(
+                data,
+                (0, 0, 0, n - num_rows)
+            )
         return data, metadata
