@@ -9,8 +9,8 @@ from data_pipeline.raw_data_aggregator import RawDataAggregator
 from data_pipeline.dataset_builder import DatasetBuilder
 
 def main():
-    trend_builder = DatasetBuilder()
-    # trend_builder.build_dataset(save_step=50)
+    trend_builder = DatasetBuilder(timing=True)
+    trend_builder.build_dataset(save_step=5)
     # trend_builder.build_dataset(reload=True, save_step=1)
     # print(DataAggregator.game_log)
     # trend_builder.build_player_trends(game_id=401873343, poi_id=4222252)[1]

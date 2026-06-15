@@ -17,6 +17,7 @@ GAME_LOG_DIR = "data/game_logs"
 MPG_TABLE_DIR = "data/mpg_tables/"
 MPG_TABLE_PATH = MPG_TABLE_DIR + 'mpg_table.json'
 CONFIG_PATH = os.path.join(GAME_LOG_DIR, "config.json")
+PLAYER_IDS_PATH = "data/player_ids.json"
 
 class RawDataAggregator():
     
@@ -42,6 +43,7 @@ class RawDataAggregator():
         "PM": pd.Series(dtype="int64"),
     })
     player_ids = pd.Series(dtype="int64")
+    player_names = {}
     mpg_table = {}
 
     @staticmethod
@@ -144,12 +146,51 @@ class RawDataAggregator():
         else:
             RawDataAggregator.game_log = pd.read_parquet(GAME_LOG_DIR + name, engine="pyarrow")
         
-        if not columns or 'PLAYER_ID' in columns:
-            RawDataAggregator.player_ids = RawDataAggregator.game_log['PLAYER_ID'].unique()
+        RawDataAggregator.load_player_ids()
+        # RawDataAggregator.load_player_names()
+    
+    @staticmethod
+    def load_player_names() -> None:
+        if RawDataAggregator.player_ids is None:
+            print('Load player ids.')
+        else: 
+            RawDataAggregator.player_names = {int(k): ESPNClient.get_player_name(int(k)) for k in RawDataAggregator.player_ids.keys()}
+        print('Player names loaded.')
+        
+    @staticmethod
+    def save_player_ids() -> None:
+        os.makedirs("data", exist_ok=True)
+        data = {str(pid): df.to_dict('records') for pid, df in RawDataAggregator.player_ids.items()}
+        with open(PLAYER_IDS_PATH, 'w') as f:
+            json.dump(data, f)
+        print('Player IDs saved.')
+
+    @staticmethod
+    def load_player_ids() -> None:
+        if os.path.exists(PLAYER_IDS_PATH):
+            with open(PLAYER_IDS_PATH, 'r') as f:
+                data = json.load(f)
+            for pid_str, records in data.items():
+                RawDataAggregator.player_ids[int(pid_str)] = pd.DataFrame(records)
+            print('Player IDs loaded from cache.')
+            return
+
+        if RawDataAggregator.game_log is None or 'PLAYER_ID' not in RawDataAggregator.game_log:
+            print('Load game log with the player ids column.')
+        else:
+            player_ids = RawDataAggregator.game_log['PLAYER_ID']
+            for player_id in player_ids:
+                dates = RawDataAggregator.game_log[RawDataAggregator.game_log['PLAYER_ID'] == player_id][['GAME_DATE', 'GAME_ID']].sort_values('GAME_DATE', ascending=False)
+                print(player_id)
+                RawDataAggregator.player_ids[player_id] = dates
+            RawDataAggregator.save_player_ids()
+        print('Player IDs loaded.')
     
     @staticmethod
     def get_players_game_on_date(player_id: int, date: datetime) -> pd.Series:
-        return RawDataAggregator.game_log[(RawDataAggregator.game_log['GAME_DATE'] == DatetimeHelpers._format_date(date)) 
+        if type(date) != int:
+            date = DatetimeHelpers._format_date(date)
+        return RawDataAggregator.game_log[(RawDataAggregator.game_log['GAME_DATE'] == date) 
                                           & (RawDataAggregator.game_log['PLAYER_ID'] == player_id)]
     
     @staticmethod
@@ -183,7 +224,7 @@ class RawDataAggregator():
             }
 
     @staticmethod
-    def get_player_mpg(player_id: int, game_date: int, timezone_offset_days: int = 1) -> float:
+    def get_player_mpg(player_id: int, game_date: int, timezone_offset_days: int = 2) -> float:
         if player_id not in RawDataAggregator.mpg_table:
             raise KeyError(f"Player {player_id} not found in mpg_table")
         
@@ -192,6 +233,8 @@ class RawDataAggregator():
         if game_date in player_dates:
             return player_dates[game_date]
         
+        print(f"Checking nearby dates within {timezone_offset_days} days")
+
         game_date_dt = datetime.strptime(str(game_date), DatetimeHelpers.get_date_format())
         for offset in range(1, timezone_offset_days + 1):
             for offset_val in [-offset, offset]:

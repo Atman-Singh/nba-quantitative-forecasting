@@ -1,4 +1,6 @@
 data/game_logs/*.parquet
 data/game_logs/config.json
+data/player_ids.json
+data/datasets/config.json
 __pycache__/
 *.pt

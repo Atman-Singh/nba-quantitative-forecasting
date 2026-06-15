@@ -192,4 +192,4 @@ class ESPNClient:
     @staticmethod
     def get_player_name(player_id: int) -> str:
         url = ATHLETES_URL + str(player_id)
-        return requests.get(url=url).json()['displayName']
+        return requests.get(url=url).json().get('displayName', 'noname')

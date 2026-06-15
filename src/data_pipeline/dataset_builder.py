@@ -5,6 +5,7 @@ from pandas import DataFrame
 from typing import Tuple
 import os
 import json
+import time
 import sys
 from pathlib import Path
 
@@ -21,18 +22,28 @@ DATASET_CONFIG_PATH = os.path.join(DATASET_DIR, "config.json")
 
 class DatasetBuilder:
     
-    def __init__(self):
+    def __init__(self, timing: bool = False):
+        self.timing = timing
         RawDataAggregator.load_game_log()
-        self.total = 0
-        self.cache_accesses = 0
-        self.cache = {}
+        self._timed("load_mpg_table", RawDataAggregator.load_mpg_table)
         self.dataset = None
+
+        self.cache = {}
+        self.player_id_cache = {}
+
+    def _timed(self, label: str, fn, *args, **kwargs):
+        if not self.timing:
+            return fn(*args, **kwargs)
+        start = time.perf_counter()
+        result = fn(*args, **kwargs)
+        print(f"  [{label}] {time.perf_counter() - start:.4f}s")
+        return result
 
     # build x years worth of overlapping sequences for every player in the league
     def build_dataset(self, years: int = 3, reload: bool = False, save_step: int = None) -> None:
         num_players = len(RawDataAggregator.player_ids)
         max_games = GAMES_PER_YEAR * years
-
+        
         start_i = 0
         if reload:
             start_i = self.load_save_index()
@@ -47,35 +58,33 @@ class DatasetBuilder:
                                 FEATURES),
                                 dtype=torch.float32)
         
-        for i, player_id in enumerate(RawDataAggregator.player_ids):
+        if RawDataAggregator.player_ids is None:
+            print('No player IDs')
+            return
+        
+        for i, player_id in enumerate(RawDataAggregator.player_ids.keys()):
+            print(player_id)
             if i < start_i:
                 continue
 
-            current_date = date = DatetimeHelpers.get_current_date()
-            game, offset = None, -1
-            while game is None or game.empty:
-                if (current_date - date).days > years * 365:
-                    break
-                game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
-                                                              date=date)
-                date = DatetimeHelpers.decrement_date(date)
-                offset += 1
+            dates = RawDataAggregator.player_ids[player_id]
 
-            if game is None or game.empty:
+            if dates is None:
+                print('No dates.')
                 continue
 
+            player_start = time.perf_counter() if self.timing else None
             j = 0
-            while j < max_games and ((current_date - date).days <= years * 365):
-                if (game.empty):
-                    print('empty')
-                if game is not None and not game.empty:
-                    game_id = game["GAME_ID"].values[0]
-                    dataset[i][j] = self.build_player_trends(game_id, player_id, dataset[i][j])
-                    j += 1
-
-                date = DatetimeHelpers.decrement_date(date)
-                game = RawDataAggregator.get_players_game_on_date(player_id=player_id,
-                                                              date=date)
+            for date, game_id in dates.values:
+                if j >= max_games:
+                    break
+                game_start = time.perf_counter() if self.timing else None
+                dataset[i][j] = self.build_player_trends(game_id, player_id, dataset[i][j], date)
+                if self.timing:
+                    print(f"  [game {j}] {time.perf_counter() - game_start:.4f}s")
+                j += 1
+            if self.timing:
+                print(f"[player {i+1} ({player_id})] {time.perf_counter() - player_start:.4f}s total")
 
             if save_step and (i + 1) % save_step == 0:
                 self.dataset = dataset
@@ -118,33 +127,43 @@ class DatasetBuilder:
             
         
 
-    def build_player_trends(self, game_id: int, poi_id: int, data: Tensor) -> Tensor:
-        game_date = ESPNClient.get_game_date(game_id)
-        print(data.shape)
-        last_5 = self.get_last_n_games(game_date, poi_id, CONTEXT_WINDOW)[0]
-        print(last_5.shape)
+    def build_player_trends(self, game_id: int, poi_id: int, data: Tensor, game_date: int = None) -> Tensor:
+        print(game_date)
+        if game_date is None:
+            game_date = self._timed("get_game_date", ESPNClient.get_game_date, game_id)
+        last_5 = self._timed("get_last_n_games", self.get_last_n_games, game_date, poi_id, CONTEXT_WINDOW)[0]
         data[0][0] = last_5
 
-        player_ids = ESPNClient.get_player_ids(game_id, poi_id)
+        pi_key = (game_id, poi_id)
+        if pi_key in self.player_id_cache:
+            print('PI cache accessed')
+            player_ids = self.player_id_cache[pi_key]
+        else:
+            player_ids = self.player_id_cache[pi_key] = self._timed("get_player_ids", ESPNClient.get_player_ids, game_id, poi_id)
+
         for i, team_ids in enumerate(player_ids, start=1):
-            RawDataAggregator.load_mpg_table()
             top_k_ids = DataFrame(columns=["PLAYER_IDS", "MPG"])
             top_k_ids["PLAYER_IDS"] = team_ids
-            top_k_ids["MPG"] = [RawDataAggregator.get_player_mpg(i, game_date) for i in top_k_ids["PLAYER_IDS"]]
+            top_k_ids["MPG"] = self._timed(
+                "get_player_mpg",
+                lambda: [RawDataAggregator.get_player_mpg(pid, game_date) for pid in top_k_ids["PLAYER_IDS"]]
+            )
             top_k_ids = top_k_ids.sort_values("MPG", ascending=False).head(MAX_ROSTER_SIZE)
 
             for j, player_id in enumerate(top_k_ids['PLAYER_IDS']):
-                self.total += 1
                 key = (player_id, game_date)
                 if key in self.cache:
-                    print(f'Accessed cache, cache len {len(self.cache)}')
-                    self.cache_accesses += 1
+                    print('Cache accessed')
                     data[i][j] = self.cache[key]
                     continue  
                       
-                last_n = self.get_last_n_games(game_date=game_date, 
-                                                    poi_id=player_id, 
-                                                    n=CONTEXT_WINDOW)[0]
+                last_n = self._timed(
+                    "get_last_n_games (teammate)",
+                    self.get_last_n_games,
+                    game_date=game_date,
+                    poi_id=player_id,
+                    n=CONTEXT_WINDOW
+                )[0]
                 num_rows = last_n.shape[0]
                 if num_rows < CONTEXT_WINDOW:
                     last_n = F.pad(
@@ -152,6 +171,7 @@ class DatasetBuilder:
                         (0, 0, 0, CONTEXT_WINDOW - num_rows)
                     )
                 data[i][j] = self.cache[key] = last_n
+        
         return data
 
     
