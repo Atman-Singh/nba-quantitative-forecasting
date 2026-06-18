@@ -134,12 +134,13 @@ class DatasetBuilder:
         last_5 = self._timed("get_last_n_games", self.get_last_n_games, game_date, poi_id, CONTEXT_WINDOW)[0]
         data[0][0] = last_5
 
-        pi_key = (game_id, poi_id)
-        if pi_key in self.player_id_cache:
+        if game_id in self.player_id_cache:
             print('PI cache accessed')
-            player_ids = self.player_id_cache[pi_key]
+            all_player_ids = self.player_id_cache[game_id]
         else:
-            player_ids = self.player_id_cache[pi_key] = self._timed("get_player_ids", ESPNClient.get_player_ids, game_id, poi_id)
+            all_player_ids = self.player_id_cache[game_id] = self._timed("get_player_ids", ESPNClient.get_player_ids, game_id)
+        poi_team_id = self._timed("get_player_team_id", RawDataAggregator.get_player_team_id, poi_id, game_id)
+        player_ids = self._timed("get_teammate_and_opponent_ids", ESPNClient.get_teammate_and_opponent_ids, all_player_ids, poi_team_id)
 
         for i, team_ids in enumerate(player_ids, start=1):
             top_k_ids = DataFrame(columns=["PLAYER_IDS", "MPG"])
@@ -151,6 +152,9 @@ class DatasetBuilder:
             top_k_ids = top_k_ids.sort_values("MPG", ascending=False).head(MAX_ROSTER_SIZE)
 
             for j, player_id in enumerate(top_k_ids['PLAYER_IDS']):
+                if player_id == poi_id:
+                    continue
+
                 key = (player_id, game_date)
                 if key in self.cache:
                     print('Cache accessed')

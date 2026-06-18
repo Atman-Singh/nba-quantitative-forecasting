@@ -24,6 +24,7 @@ class RawDataAggregator():
     game_log = pd.DataFrame({
         "GAME_ID": pd.Series(dtype="int64"),
         "GAME_DATE": pd.Series(dtype="int64"),
+        "TEAM_ID": pd.Series(dtype="int64"),
         "REAL_PLAYER": pd.Series(dtype="int64"),
         "PLAYER_ID": pd.Series(dtype="int64"),
         "PLAYING": pd.Series(dtype="int64"),
@@ -67,6 +68,7 @@ class RawDataAggregator():
 
 
         while (current_date - date).days <= years * 365:
+            print(f'Fetching games for {date}')
             try:
                 games = ESPNClient.get_scoreboard(date)['events']
             except KeyError:
@@ -77,6 +79,11 @@ class RawDataAggregator():
                 box_scores = ESPNClient.get_box_scores(game_id)
                 if box_scores:
                     for team in box_scores:
+                        try:
+                            team_id = team['team']['id']
+                        except KeyError:
+                            print('No team id.')
+                            team_id = 0
                         for player in team['statistics'][0]['athletes']:
                             player_id = int(player['athlete'].get('id', -1))
                             if player_id == -1:
@@ -84,19 +91,20 @@ class RawDataAggregator():
                                 continue
 
                             ESPNClient.format_box_score(player['stats'])
-                            row = [game_id, DatetimeHelpers._format_date(date), 1, player_id, int(not player['didNotPlay'])]
+                            row = [game_id, DatetimeHelpers._format_date(date), team_id, 1, player_id, int(not player['didNotPlay'])]
                             row.extend(player['stats'])
                             rows.append(row)
             date = DatetimeHelpers.decrement_date(date)
 
             if save_step and (current_date - date).days % save_step == 0:
+                print(f"Saving game log at {date}")
                 RawDataAggregator._add_to_game_log(pd.DataFrame(rows, columns=RawDataAggregator.game_log.columns))
                 RawDataAggregator.save_game_log(str(date))
                 rows = []
             
         RawDataAggregator._add_to_game_log(pd.DataFrame(rows, columns=RawDataAggregator.game_log.columns))
         RawDataAggregator.save_game_log()
-    
+
     @staticmethod
     def save_game_log(save_date: str = None) -> None:
         name = "/game_log_" + DatetimeHelpers.get_timestamp() + '.parquet'
@@ -249,3 +257,10 @@ class RawDataAggregator():
         except:
             return None
         return RawDataAggregator.mpg_table[player_id][key]
+
+    @staticmethod
+    def get_player_team_id(player_id: int, game_id: int):
+        if RawDataAggregator.game_log is None:
+            print('Load game log.')
+        mask = (RawDataAggregator.game_log['PLAYER_ID'] == player_id) & (RawDataAggregator.game_log['GAME_ID'] == game_id)
+        return RawDataAggregator.game_log.loc[mask, 'TEAM_ID'].iloc[0]

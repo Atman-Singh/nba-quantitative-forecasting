@@ -10,8 +10,8 @@ from data_pipeline.dataset_builder import DatasetBuilder
 
 def main():
     trend_builder = DatasetBuilder(timing=True)
-    trend_builder.build_dataset(save_step=5)
-    # trend_builder.build_dataset(reload=True, save_step=1)
+    # trend_builder.build_dataset(save_step=5)
+    trend_builder.build_dataset(reload=True, save_step=5)
     # print(DataAggregator.game_log)
     # trend_builder.build_player_trends(game_id=401873343, poi_id=4222252)[1]
     trend_builder.load_dataset()

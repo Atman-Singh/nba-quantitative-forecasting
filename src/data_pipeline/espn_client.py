@@ -140,44 +140,31 @@ class ESPNClient:
             return requests.get(url=url).json()['boxscore']['players']
         except KeyError:
             print('Game is yet to be played.')
-         
-    # get ids of teammate and opponents relative to a particular player id from a game id
+    
     @staticmethod
-    def get_player_ids(game_id: int, player_id: str) -> tuple[list[int], list[int]]:
-        teammates = []
-        opponents = []
+    def get_player_ids(game_id: int) -> dict[int, list[int]]:
         box_scores = ESPNClient.get_box_scores(game_id=game_id)
-        
-        poi_team_id = -1
-        temp = []
+        player_ids = {}
         for team in box_scores:
-            num_athletes = len(team['statistics'][0]['athletes'])
-            cur_team_id = team['team']['id']
-            if poi_team_id == -2:
-                poi_team_id = cur_team_id
-            for i, entry in enumerate(team['statistics'][0]['athletes']):
+            team_ids = []
+            for entry in team['statistics'][0]['athletes']:
                 try:
-                    cur_id = entry['athlete']['id']
+                    team_ids.append(int(entry['athlete']['id']))
                 except KeyError:
                     print('No ID')
                     continue
-                if poi_team_id == -1:
-                    if cur_id == player_id:
-                        teammates = temp
-                        poi_team_id = cur_team_id
-                    elif i == num_athletes-1:
-                        temp.append(int(cur_id))
-                        opponents = temp
-                        poi_team_id = -2
-                    else:
-                        temp.append(int(cur_id))
-                elif cur_id != player_id:
-                    if cur_team_id == poi_team_id:
-                        teammates.append(int(cur_id))
-                    else:
-                        opponents.append(int(cur_id))
-        
-        return teammates, opponents
+            player_ids[team['team']['id']] = team_ids
+        return player_ids
+
+    @staticmethod
+    def get_teammate_and_opponent_ids(player_ids: dict[int, list[int]], poi_team_id: int) -> tuple[list[int], list[int]]:
+        teammate_ids, opponent_ids = [], []
+        for team_id, ids in player_ids.items():
+            if team_id == poi_team_id:
+                teammate_ids = ids
+            else:
+                opponent_ids = ids
+        return teammate_ids, opponent_ids
     
     @staticmethod
     def get_game_date(game_id: int) -> int:

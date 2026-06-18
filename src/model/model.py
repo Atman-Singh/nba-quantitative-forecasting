@@ -16,4 +16,4 @@ class Model():
                                hidden_size=hidden_size,
                                batch_first=True)
         
-        self.mlp = 
+        # self.mlp = 
