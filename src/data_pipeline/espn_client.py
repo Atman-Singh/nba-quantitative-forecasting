@@ -153,7 +153,7 @@ class ESPNClient:
                 except KeyError:
                     print('No ID')
                     continue
-            player_ids[team['team']['id']] = team_ids
+            player_ids[int(team['team']['id'])] = team_ids
         return player_ids
 
     @staticmethod

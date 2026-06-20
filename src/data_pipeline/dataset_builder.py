@@ -19,6 +19,7 @@ from .espn_client import ESPNClient
 GAMES_PER_YEAR = 60
 DATASET_DIR = r"data/datasets"
 DATASET_CONFIG_PATH = os.path.join(DATASET_DIR, "config.json")
+CACHE_PATH = os.path.join(DATASET_DIR, "cache.pt")
 
 class DatasetBuilder:
     
@@ -30,6 +31,7 @@ class DatasetBuilder:
 
         self.cache = {}
         self.player_id_cache = {}
+        self.load_cache()
 
     def _timed(self, label: str, fn, *args, **kwargs):
         if not self.timing:
@@ -97,7 +99,8 @@ class DatasetBuilder:
     def save_dataset(self, save_index: int = None) -> None:
         os.makedirs(DATASET_DIR, exist_ok=True)
         for f in Path(DATASET_DIR).glob("*.pt"):
-            f.unlink()
+            if f.name != "cache.pt":
+                f.unlink()
         name = "/dataset_" + DatetimeHelpers.get_timestamp() + '.pt'
         dataset_path = DATASET_DIR + name
         torch.save(self.dataset, dataset_path)
@@ -113,6 +116,27 @@ class DatasetBuilder:
 
         with open(DATASET_CONFIG_PATH, 'w') as f:
             json.dump(config, f)
+
+        self.save_cache()
+
+    def save_cache(self) -> None:
+        os.makedirs(DATASET_DIR, exist_ok=True)
+        torch.save({
+            'cache': self.cache,
+            'player_id_cache': self.player_id_cache
+        }, CACHE_PATH)
+        print(f"Cache saved at {CACHE_PATH} ({len(self.cache)} entries, {len(self.player_id_cache)} game IDs)")
+
+    def load_cache(self) -> None:
+        if not os.path.exists(CACHE_PATH):
+            return
+        data = torch.load(CACHE_PATH, weights_only=False)
+        self.cache = data.get('cache', {})
+        self.player_id_cache = {
+            gid: {int(k): v for k, v in team_dict.items()}
+            for gid, team_dict in data.get('player_id_cache', {}).items()
+        }
+        print(f"Cache loaded from {CACHE_PATH} ({len(self.cache)} entries, {len(self.player_id_cache)} game IDs)")
 
     def load_save_index(self) -> int:
         with open(DATASET_CONFIG_PATH, 'r') as f:
